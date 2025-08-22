@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <title>Graacho Chat</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=MedievalSharp&display=swap');
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: transparent;
+      overflow: hidden;
+      font-family: 'UnifrakturCook', cursive;
+      font-size: 1.5em;
+    }
+
+    #chat {
+      position: absolute;
+      bottom: 0;
+      width: 100%;
+      max-height: 100vh;
+      display: flex;
+      flex-direction: column-reverse;
+      padding: 10px;
+      box-sizing: border-box;
+      background: rgba(0, 0, 0, 0.4);
+    }
+
+    .message {
+      margin-bottom: 6px;
+      padding: 6px 10px;
+      background: rgba(0, 0, 0, 0.2);
+    }
+
+    .message img {
+      height: 42px;
+      vertical-align: middle;
+    }
+
+    .nick {
+      color: #ff0000;
+      text-shadow: 0 0 4px #900;
+      font-size: 1.5em;
+      font-family: 'MedievalSharp', cursive; /* Gotycka, czytelna */
+    }
+
+    .text {
+      color: #f8f8ff;
+      text-shadow: 0 0 4px #900;
+      font-size: 1.5em;
+      font-family: 'MedievalSharp', cursive; /* Gotycka, czytelna */
+    }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <script>
+    const channel = "graacho";
+    let emotes = {};
+    let ws;
+    let reconnectTimeout = 5000;
+
+    async function load7TVEmotes() {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+
+        const userRes = await fetch(`https://api.ivr.fi/v2/twitch/user?login=${channel}`, { signal: controller.signal });
+        const userData = await userRes.json();
+        const twitchId = userData[0]?.id;
+
+        clearTimeout(timeout);
+        if (!twitchId) throw new Error("Nie znaleziono Twitch ID");
+
+        const emoteRes = await fetch(`https://7tv.io/v3/users/twitch/${twitchId}`);
+        const data = await emoteRes.json();
+
+        data.emote_set.emotes.forEach(e => {
+          emotes[e.name] = `https://cdn.7tv.app/emote/${e.id}/4x`;
+        });
+
+        console.log("7TV emotes loaded:", Object.keys(emotes).length);
+      } catch (e) {
+        console.error("7TV emote load error:", e);
+      }
+    }
+
+    function replaceEmotes(text) {
+      return text.split(" ").map(word => {
+        return emotes[word] ? `<img src="${emotes[word]}" alt="${word}">` : word;
+      }).join(" ");
+    }
+
+    function connectChat() {
+      ws = new WebSocket("wss://irc-ws.chat.twitch.tv:443");
+
+      ws.onopen = () => {
+        console.log("Połączono z Twitch IRC");
+        ws.send("PASS SCHMOOPIIE");
+        ws.send("NICK justinfan" + Math.floor(Math.random() * 100000));
+        ws.send("JOIN #" + channel);
+      };
+
+      ws.onmessage = (event) => {
+        const message = event.data;
+
+        if (message.startsWith("PING")) {
+          ws.send("PONG :tmi.twitch.tv");
+          return;
+        }
+
+        if (message.includes("PRIVMSG")) {
+          const username = message.split("!")[0].substring(1);
+          const text = message.split("PRIVMSG")[1].split(" :")[1]?.trim() || "";
+
+          const chat = document.getElementById("chat");
+          const msg = document.createElement("div");
+          msg.className = "message";
+          msg.innerHTML = `<span class='nick'>${username}:</span> <span class='text'>${replaceEmotes(text)}</span>`;
+          chat.prepend(msg);
+
+          // Usunięte automatyczne usuwanie wiadomości
+          while (chat.childElementCount > 50) {
+            chat.removeChild(chat.lastChild);
+          }
+        }
+      };
+
+      ws.onclose = () => {
+        console.warn("Rozłączono z Twitch IRC, ponawianie połączenia za", reconnectTimeout / 1000, "sekund");
+        setTimeout(connectChat, reconnectTimeout);
+      };
+
+      ws.onerror = (err) => {
+        console.error("Błąd WebSocket:", err);
+        ws.close();
+      };
+    }
+
+    load7TVEmotes().then(connectChat);
+  </script>
+</body>
+</html>
